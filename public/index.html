@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+    <title>Вход в систему</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container" style="margin-top: 100px;">
+        <div class="card">
+            <h3>Вход в кабинет</h3>
+            <input id="login" type="text" placeholder="Логин">
+            <input id="password" type="password" placeholder="Пароль">
+            <button onclick="doLogin()" style="width: 100%; margin-top: 10px;">Войти</button>
+        </div>
+    </div>
+
+    <script>
+    async function doLogin() {
+        const login = document.getElementById("login").value;
+        const password = document.getElementById("password").value;
+        const res = await fetch("/login", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({login, password})
+        });
+        const data = await res.json();
+        if (data.success) {
+            localStorage.setItem("user", JSON.stringify(data.user));
+            location.href = data.user.role === "admin" ? "admin.html" : "employee.html";
+        } else {
+            alert("Доступ запрещен");
+        }
+    }
+    </script>
+</body>
+</html>

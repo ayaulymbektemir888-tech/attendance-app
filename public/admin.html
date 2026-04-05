@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+    <title>Панель администратора</title>
+    <link rel="stylesheet" href="style.css">
+    <script>
+        (function() {
+            const user = JSON.parse(localStorage.getItem("user"));
+            const currentPage = window.location.pathname;
+
+            if (!user) {
+                window.location.href = "index.html"; // Если не залогинен — на вход
+            } else if (currentPage.includes("admin.html") && user.role !== "admin") {
+                window.location.href = "employee.html"; // Если не админ лезет в админку
+            } else if (currentPage.includes("employee.html") && user.role !== "employee") {
+                window.location.href = "admin.html"; // Если админ лезет к сотруднику
+            }
+        })();
+    </script>
+</head>
+<body>
+<div class="container">
+    <h2>Панель администратора</h2>
+
+    <div class="card" style="text-align:center">
+        <h4>QR код для отметки</h4>
+        <img id="qr" style="width: 200px; background: white; padding: 10px; border-radius: 10px; display: block; margin: 0 auto;">
+    </div>
+
+
+    <div class="card" style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button onclick="changeAdminPass()" style="background: #666;">Сменить мой пароль</button>
+        <button onclick="setOfficeLocation()" style="background: #ffffff;">Установить это место как офис</button>
+    </div>
+    <p id="locStatus" style="font-size: 0.8em; text-align: center; color: #aaa;"></p>
+
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
+            <h3 style="margin:0; background: none; padding:0;">Сотрудники</h3>
+            <button onclick="addEmp()" style="border-radius: 50%; width: 40px; height: 40px; padding:0;">+</button>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Логин</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody id="table">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <h3 id="mTitle" style="background:none; color:white; padding:0; margin-top:0;"></h3>
+        <div id="mBody"></div>
+        <button onclick="closeM()" style="background:#444; color:white; width:100%; margin-top:20px">Закрыть</button>
+    </div>
+</div>
+
+<script>
+    // Загрузка QR
+    async function loadQR(){
+        try {
+            const res = await fetch("/qr");
+            const data = await res.json();
+            document.getElementById("qr").src = data.qr;
+        } catch(e) { console.error("Ошибка QR", e); }
+    }
+    setInterval(loadQR, 30000); 
+    loadQR();
+
+    // Загрузка списка сотрудников
+    async function loadEmployees(){
+        try {
+            const res = await fetch("/employees");
+            const data = await res.json();
+            const tbody = document.getElementById("table");
+            tbody.innerHTML = "";
+            
+            if(data.length === 0) {
+                tbody.innerHTML = "<tr><td colspan='3' style='text-align:center'>Нет сотрудников</td></tr>";
+                return;
+            }
+
+            data.forEach((emp, i) => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${i+1}</td>
+                    <td>${emp.login}</td>
+                    <td style="white-space: nowrap;">
+                        <button onclick="editEmp(${emp.id},'${emp.login}')" title="Редактировать"><span class="icon icon-edit"></span></button>
+                        <button onclick="viewCal(${emp.id},'${emp.login}')" title="Календарь"><span class="icon icon-calendar"></span></button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch(e) { console.error("Ошибка загрузки списка", e); }
+    }
+    loadEmployees();
+
+    // Остальные функции (модалки, сохранение) без изменений, как в предыдущем ответе
+    function addEmp() {
+        showM("Добавить сотрудника", `
+            <input id="nL" placeholder="Логин">
+            <input id="nP" type="password" placeholder="Пароль">
+            <button onclick="saveNew()" style="width:100%; margin-top:10px">Создать</button>
+        `);
+    }
+
+    async function saveNew() {
+        const login = document.getElementById("nL").value;
+        const password = document.getElementById("nP").value;
+        if(!login || !password) return alert("Заполните поля");
+        await fetch("/addEmployee", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({login, password})
+        });
+        closeM(); 
+        loadEmployees();
+    }
+
+    function editEmp(id, login) {
+        showM("Редактировать", `
+            <input id="eL" value="${login}">
+            <input id="eP" type="password" placeholder="Новый пароль (опционально)">
+            <button onclick="updateEmp(${id})" style="width:100%; margin-top:10px">Сохранить</button>
+        `);
+    }
+
+    async function updateEmp(id) {
+        const login = document.getElementById("eL").value;
+        const password = document.getElementById("eP").value;
+        await fetch("/updateUser", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({id, login, password})
+        });
+        closeM(); 
+        loadEmployees();
+    }
+
+    let cMonth = new Date().getMonth();
+    let cYear = new Date().getFullYear();
+
+    async function viewCal(id, name) {
+      const res = await fetch("/attendance/" + id);
+      const data = await res.json();
+      
+      // Создаем карту: день -> время
+      const attendanceMap = {};
+      
+      data.forEach(entry => {
+          // entry.time это "2024-4-3 14:20"
+          const [datePart, timePart] = entry.time.split(' '); 
+          const [y, m, d] = datePart.split('-').map(Number);
+
+          // Проверяем, совпадает ли год и месяц с выбранным в календаре
+          if (y === cYear && m === (cMonth + 1)) {
+              attendanceMap[d] = timePart || "Отмечено";
+          }
+      });
+
+      const monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+      const daysInMonth = new Date(cYear, cMonth + 1, 0).getDate();
+      const firstDay = new Date(cYear, cMonth, 1).getDay();
+      const offset = firstDay === 0 ? 6 : firstDay - 1;
+
+      let html = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px">
+              <button onclick="changeM(-1, ${id}, '${name}')"><span class="icon icon-left"></span></button>
+              <span style="font-weight:bold">${monthNames[cMonth]} ${cYear}</span>
+              <button onclick="changeM(1, ${id}, '${name}')"><span class="icon icon-right"></span></button>
+          </div>
+          <div class="calendar-grid">`;
+
+      for(let i=0; i<offset; i++) html += `<div class="calendar-day empty"></div>`;
+      
+      for(let d=1; d<=daysInMonth; d++) {
+          const timeAtDay = attendanceMap[d];
+          const isPresent = !!timeAtDay;
+          
+          // Всплывающее окно при клике
+          const clickAction = isPresent 
+              ? `onclick="alert('Сотрудник: ${name}\\nВремя: ${timeAtDay}')"` 
+              : `onclick="alert('Нет отметки за этот день')"` ;
+
+          html += `<div class="calendar-day ${isPresent?'present':''}" ${clickAction} style="${isPresent?'cursor:pointer':''}">
+                      ${d}
+                  </div>`;
+      }
+      html += `</div>`;
+      showM(`Посещаемость: ${name}`, html);
+    }
+
+    function changeM(step, id, name) {
+        cMonth += step;
+        if(cMonth < 0) { cMonth=11; cYear--; }
+        if(cMonth > 11) { cMonth=0; cYear++; }
+        viewCal(id, name);
+    }
+
+    function showM(t, b) {
+        document.getElementById("mTitle").innerText = t;
+        document.getElementById("mBody").innerHTML = b;
+        document.getElementById("modal").classList.add("active");
+    }
+    function closeM() { document.getElementById("modal").classList.remove("active"); }
+
+    async function loadEmployees(){
+      try {
+          const res = await fetch("/employees");
+          const data = await res.json();
+          const tbody = document.getElementById("table");
+          tbody.innerHTML = "";
+          
+          data.forEach((emp, i) => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `
+                  <td>${i+1}</td>
+                  <td>${emp.login}</td>
+                  <td style="white-space: nowrap;">
+                      <button onclick="editEmp(${emp.id},'${emp.login}')"><span class="icon icon-edit"></span></button>
+                      <button onclick="viewCal(${emp.id},'${emp.login}')"><span class="icon icon-calendar"></span></button>
+                      <button onclick="confirmDelete(${emp.id},'${emp.login}')" style="background:#ff4444; color:white;"><span class="icon icon-delete"></span></button>
+                  </td>
+              `;
+              tbody.appendChild(tr);
+          });
+      } catch(e) { console.error(e); }
+  }
+
+  async function confirmDelete(id, login) {
+      if (confirm(`Вы уверены, что хотите удалить сотрудника ${login} и всю его историю?`)) {
+          const res = await fetch("/deleteUser", {
+              method: "POST",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({ id })
+          });
+          const data = await res.json();
+          if (data.success) {
+              loadEmployees(); // Обновляем таблицу
+          } else {
+              alert("Ошибка при удалении");
+          }
+      }
+  }
+  // Функция смены пароля админа
+function changeAdminPass() {
+    const newPass = prompt("Введите новый пароль:");
+    if (!newPass) return;
+    
+    fetch("/changePassword", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ id: user.id, newPassword: newPass })
+    }).then(res => res.json()).then(data => {
+        if(data.success) alert("Пароль изменен!");
+    });
+}
+
+// Функция установки геолокации офиса
+function setOfficeLocation() {
+    if (!confirm("Установить ваше текущее местоположение как точку входа для сотрудников?")) return;
+    
+    document.getElementById("locStatus").innerText = "Получение координат...";
+    
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+        const res = await fetch("/updateLocation", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(`Координаты обновлены!\nLat: ${data.lat}\nLng: ${data.lng}`);
+            document.getElementById("locStatus").innerText = `Офис: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`;
+        }
+    }, (err) => {
+        alert("Ошибка GPS: " + err.message);
+    });
+}
+
+// При загрузке страницы покажем текущие координаты
+async function showCurrentOffice() {
+    const res = await fetch("/getLocation");
+    const data = await res.json();
+    document.getElementById("locStatus").innerText = `Текущий офис: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`;
+}
+showCurrentOffice();
+</script>
+</body>
+</html>

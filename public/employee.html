@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+    <title>Личный кабинет</title>
+    <link rel="stylesheet" href="style.css">
+    <script>
+        (function() {
+            const user = JSON.parse(localStorage.getItem("user"));
+            const currentPage = window.location.pathname;
+
+            if (!user) {
+                window.location.href = "index.html"; // Если не залогинен — на вход
+            } else if (currentPage.includes("admin.html") && user.role !== "admin") {
+                window.location.href = "employee.html"; // Если не админ лезет в админку
+            } else if (currentPage.includes("employee.html") && user.role !== "employee") {
+                window.location.href = "admin.html"; // Если админ лезет к сотруднику
+            }
+        })();
+    </script>
+</head>
+<body>
+<div class="container">
+    <h2 id="greeting">Привет!</h2>
+
+    <div class="card" style="text-align:center">
+        <div id="cam-area"></div>
+        <button id="scanBtn" style="width:100%; padding: 20px; font-size: 1.2em;">
+            Отметиться на работе
+        </button>
+        <p id="statusMsg" style="margin-top:15px"></p>
+    </div>
+
+    <button onclick="openMyCal()" style="width:100%; background: #333; color: white;">
+        <span class="icon icon-calendar" style="vertical-align:middle; margin-right:10px"></span>
+        Мой календарь посещений
+    </button>
+</div>
+
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <h3 id="mTitle"></h3>
+        <div id="mBody"></div>
+        <button onclick="closeM()" style="background:#444; color:white; width:100%; margin-top:10px">Закрыть</button>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<script>
+    const user = JSON.parse(localStorage.getItem("user"));
+    document.getElementById("greeting").innerText = `Привет, ${user.login}!`;
+
+    const scanBtn = document.getElementById("scanBtn");
+    const statusMsg = document.getElementById("statusMsg");
+
+    scanBtn.addEventListener("click", async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const video = document.createElement("video");
+            video.id = "video";
+            video.srcObject = stream;
+            video.setAttribute("playsinline", true);
+            video.play();
+            
+            document.getElementById("cam-area").innerHTML = "";
+            document.getElementById("cam-area").appendChild(video);
+            scanBtn.style.display = "none";
+            statusMsg.innerText = "Наведите на QR-код";
+
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+
+            const loop = setInterval(async () => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imgData.data, imgData.width, imgData.height);
+
+                    if (code) {
+                        clearInterval(loop);
+                        stream.getTracks().forEach(t => t.stop());
+                        video.remove();
+                        scanBtn.style.display = "block";
+                        sendMark(code.data);
+                    }
+                }
+            }, 300);
+        } catch (e) { alert("Ошибка доступа к камере"); }
+    });
+
+    async function sendMark(token) {
+        statusMsg.innerText = "Определяем геопозицию...";
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const res = await fetch("/scan", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({
+                    user_id: user.id,
+                    token: token,
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude
+                })
+            });
+            const data = await res.json();
+            statusMsg.innerText = data.message;
+            statusMsg.style.color = data.success ? "#4CAF50" : "#ff4444";
+        }, () => {
+            statusMsg.innerText = "Включите GPS!";
+        });
+    }
+
+    // Тот же календарь что и у админа, но для себя
+    let cMonth = new Date().getMonth();
+    let cYear = new Date().getFullYear();
+
+    async function openMyCal() {
+        const res = await fetch("/attendance/" + user.id);
+        const data = await res.json();
+        
+        // Создаем карту: день -> время (например: { 3: "14:20", 5: "09:05" })
+        const attendanceMap = {};
+        
+        data.forEach(entry => {
+            // Ожидаем формат от сервера: "2024-4-3 14:20"
+            if (!entry.time) return;
+            
+            const [datePart, timePart] = entry.time.split(' '); 
+            const [y, m, d] = datePart.split('-').map(Number);
+
+            // Если год и месяц совпадают с текущим окном календаря
+            if (y === cYear && m === (cMonth + 1)) {
+                attendanceMap[d] = timePart || "Отмечено";
+            }
+        });
+
+        const monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+        const daysInMonth = new Date(cYear, cMonth + 1, 0).getDate();
+        
+        // Расчет отступа (чтобы неделя начиналась с понедельника)
+        let firstDay = new Date(cYear, cMonth, 1).getDay();
+        const offset = firstDay === 0 ? 6 : firstDay - 1;
+
+        let html = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px">
+                <button onclick="changeM(-1)"><span class="icon icon-left"></span></button>
+                <span style="font-weight:bold">${monthNames[cMonth]} ${cYear}</span>
+                <button onclick="changeM(1)"><span class="icon icon-right"></span></button>
+            </div>
+            <div class="calendar-grid">`;
+
+        // Пустые ячейки в начале месяца
+        for(let i = 0; i < offset; i++) {
+            html += `<div class="calendar-day empty"></div>`;
+        }
+        
+        // Дни месяца
+        for(let d = 1; d <= daysInMonth; d++) {
+            const timeAtDay = attendanceMap[d];
+            const isPresent = !!timeAtDay;
+            
+            // Действие при клике
+            const clickAction = isPresent 
+                ? `onclick="alert('Вы отметились в этот день\\nВремя: ${timeAtDay}')"` 
+                : `onclick="alert('В этот день отметки не было')"` ;
+
+            html += `
+                <div class="calendar-day ${isPresent ? 'present' : ''}" 
+                    ${clickAction} 
+                    style="${isPresent ? 'cursor:pointer' : ''}">
+                    ${d}
+                </div>`;
+        }
+        html += `</div>`;
+        
+        // Показываем в модальном окне
+        document.getElementById("mTitle").innerText = "Мой календарь";
+        document.getElementById("mBody").innerHTML = html;
+        document.getElementById("modal").classList.add("active");
+    }
+
+    // Функция переключения месяца для сотрудника
+    function changeM(step) {
+        cMonth += step;
+        if(cMonth < 0) { cMonth=11; cYear--; }
+        if(cMonth > 11) { cMonth=0; cYear++; }
+        openMyCal();
+    }
+    function closeM() { document.getElementById("modal").classList.remove("active"); }
+</script>
+</body>
+</html>

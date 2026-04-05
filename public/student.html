@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Кабинет студента</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+  <h2>Студенческий кабинет</h2>
+
+  <div class="row g-3">
+    <!-- Карточка отметки -->
+    <div class="col-md-6">
+      <div class="card text-center">
+        <h5>Отметка посещаемости</h5>
+        <div id="video-container"></div>
+        <button id="markBtn">Отметиться</button>
+        <div id="msg" class="alert d-none"></div>
+      </div>
+    </div>
+
+    <!-- Статистика и история -->
+    <div class="col-md-6">
+      <div class="card">
+        <h5>Статистика посещений</h5>
+        <p>Всего отметок: <span id="totalCount">0</span></p>
+        <p>Процент посещаемости: <span id="percent">0%</span></p>
+      </div>
+
+      <div class="card">
+        <h5>История посещений</h5>
+        <ul id="historyList"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<script>
+// Элементы
+const videoContainer = document.getElementById("video-container");
+const msg = document.getElementById("msg");
+const historyList = document.getElementById("historyList");
+const totalCount = document.getElementById("totalCount");
+const percentElem = document.getElementById("percent");
+const markBtn = document.getElementById("markBtn");
+
+if(!localStorage.device_id) localStorage.device_id = Math.random().toString(36).substring(2);
+
+let scanning = false;
+
+// Промис для геолокации
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject);
+  });
+}
+
+// Основная функция отметки
+markBtn.addEventListener("click", async () => {
+  if(scanning) return;
+  scanning = true;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    let video = document.getElementById("video");
+    if(!video) {
+      video = document.createElement("video");
+      video.id = "video";
+      video.autoplay = true;
+      video.style.width = "100%";
+      videoContainer.appendChild(video);
+    }
+    video.srcObject = stream;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    msg.classList.remove("d-none");
+    msg.className = "alert alert-info";
+    msg.innerText = "Сканирование QR...";
+
+    const scanInterval = setInterval(async () => {
+      if(video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+      if(code) {
+        clearInterval(scanInterval);
+        msg.innerText = "QR найден, отправка...";
+
+        try {
+          const pos = await getPosition();
+
+          const res = await fetch("/scan", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+              user_id: 1,
+              token: code.data,
+              device_id: localStorage.device_id,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude
+            })
+          });
+
+          const data = await res.json();
+          msg.innerText = data.message || (data.success ? "✅ Отмечено!" : "❌ Ошибка");
+          msg.className = data.success ? "alert alert-success" : "alert alert-danger";
+
+          if(data.success) loadHistory();
+        } catch(err) {
+          msg.innerText = "Ошибка при отправке: " + err.message;
+          msg.className = "alert alert-danger";
+        } finally {
+          stream.getTracks().forEach(track => track.stop());
+          scanning = false;
+        }
+      }
+    }, 300);
+
+  } catch(err) {
+    console.error(err);
+    msg.classList.remove("d-none");
+    msg.innerText = "Ошибка камеры: " + err.message;
+    msg.className = "alert alert-danger";
+    scanning = false;
+  }
+});
+
+// Загрузка истории
+async function loadHistory() {
+  const res = await fetch("/attendance");
+  const data = await res.json();
+  const myData = data.filter(a => a.user_id === 1);
+
+  historyList.innerHTML = "";
+  myData.slice(-10).forEach(a => {
+    const li = document.createElement("li");
+    li.innerText = `${a.time}`;
+    historyList.appendChild(li);
+  });
+
+  totalCount.innerText = myData.length;
+  const totalLessons = 20;
+  const percent = totalLessons ? Math.round(myData.length / totalLessons * 100) : 0;
+  percentElem.innerText = percent + "%";
+}
+
+setInterval(loadHistory, 5000);
+loadHistory();
+</script>
+
+</body>
+</html>
