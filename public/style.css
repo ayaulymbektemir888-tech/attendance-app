@@ -122,3 +122,22 @@ td { padding: 10px; border-bottom: 1px solid #333; }
     transform: scale(1.1);
     transition: 0.2s;
 }
+
+.icon-chart {
+    display: flex;             /* Включаем гибкий контейнер */
+    align-items: center;       /* Центрируем по вертикали */
+    justify-content: center;    /* Центрируем по горизонтали */
+    width: 20px;
+    height: 20px;
+    background-color: currentColor;
+    
+    /* Маска */
+    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M496 384H64V80c0-8.8-7.2-16-16-16S32 71.2 32 80v320c0 17.7 14.3 32 32 32h432c8.8 0 16-7.2 16-16s-7.2-16-16-16zM224 224v112c0 8.8 7.2 16 16 16s16-7.2 16-16V224c0-8.8-7.2-16-16-16s-16 7.2-16 16zm128-96v208c0 8.8 7.2 16 16 16s16-7.2 16-16V128c0-8.8-7.2-16-16-16s-16 7.2-16 16zM96 288v48c0 8.8 7.2 16 16 16s16-7.2 16-16v-48c0-8.8-7.2-16-16-16s-16 7.2-16 16z"/></svg>');
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
+
+    /* Убираем все смещения */
+    margin: 0 auto;
+    padding: 0;
+}

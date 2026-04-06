@@ -5,17 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
     <title>Панель администратора</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
+        // Защита страницы
         (function() {
             const user = JSON.parse(localStorage.getItem("user"));
-            const currentPage = window.location.pathname;
-
-            if (!user) {
-                window.location.href = "index.html"; // Если не залогинен — на вход
-            } else if (currentPage.includes("admin.html") && user.role !== "admin") {
-                window.location.href = "employee.html"; // Если не админ лезет в админку
-            } else if (currentPage.includes("employee.html") && user.role !== "employee") {
-                window.location.href = "admin.html"; // Если админ лезет к сотруднику
+            if (!user || user.role !== "admin") {
+                window.location.href = "index.html";
             }
         })();
     </script>
@@ -29,17 +25,16 @@
         <img id="qr" style="width: 200px; background: white; padding: 10px; border-radius: 10px; display: block; margin: 0 auto;">
     </div>
 
-
-    <div class="card" style="display: flex; gap: 10px; flex-wrap: wrap;">
+    <div class="card" style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
         <button onclick="changeAdminPass()" style="background: #666;">Сменить мой пароль</button>
-        <button onclick="setOfficeLocation()" style="background: #ffffff;">Установить это место как офис</button>
+        <button onclick="setOfficeLocation()" style="background: #ffffff; color: rgb(0, 0, 0);">Установить это место как офис</button>
     </div>
-    <p id="locStatus" style="font-size: 0.8em; text-align: center; color: #aaa;"></p>
+    <p id="locStatus" style="font-size: 0.8em; text-align: center; color: #aaa; margin-top: -10px;"></p>
 
     <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
-            <h3 style="margin:0; background: none; padding:0;">Сотрудники</h3>
-            <button onclick="addEmp()" style="border-radius: 50%; width: 40px; height: 40px; padding:0;">+</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px; position: relative;">
+            <h3 style="margin:0; background: none; padding: 0;">Сотрудники</h3>
+            <button onclick="addEmp()" style="border-radius: 50%; width: 40px; height: 40px; font-size: 20px; padding: 0; position: absolute; right: 0; top: -5px;">+</button>
         </div>
         <table>
             <thead>
@@ -57,14 +52,37 @@
 
 <div id="modal" class="modal">
     <div class="modal-content">
-        <h3 id="mTitle" style="background:none; color:white; padding:0; margin-top:0;"></h3>
+        <h3 id="mTitle" style="margin-top:0; color: white; background: none; padding: 0;"></h3>
         <div id="mBody"></div>
         <button onclick="closeM()" style="background:#444; color:white; width:100%; margin-top:20px">Закрыть</button>
     </div>
 </div>
 
+<div id="chartModal" class="modal">
+    <div class="modal-content" style="width: 95%; max-width: 600px;">
+        <h3 id="modalTitle" style="margin-top:0; color: white;">График активности</h3>
+        
+        <div style="display: flex; gap: 5px; margin-bottom: 15px; justify-content: center;">
+            <button id="btn-week" onclick="updateChartPeriod('week')" style="flex:1; padding: 5px; font-size: 12px; background: #4a90e2;">Неделя</button>
+            <button id="btn-month" onclick="updateChartPeriod('month')" style="flex:1; padding: 5px; font-size: 12px; background: #444;">Месяц</button>
+            <button id="btn-year" onclick="updateChartPeriod('year')" style="flex:1; padding: 5px; font-size: 12px; background: #444;">Год</button>
+        </div>
+
+        <div style="height: 300px; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 10px;">
+            <canvas id="employeeChart"></canvas>
+        </div>
+        <button onclick="closeModal()" style="background:#444; color:white; width:100%; margin-top:20px">Закрыть</button>
+    </div>
+</div>
+
 <script>
-    // Загрузка QR
+    let myChart = null;
+    let cMonth = new Date().getMonth();
+    let cYear = new Date().getFullYear();
+    const user = JSON.parse(localStorage.getItem("user"));
+
+    // --- 1. ЗАГРУЗКА ДАННЫХ ---
+
     async function loadQR(){
         try {
             const res = await fetch("/qr");
@@ -75,8 +93,7 @@
     setInterval(loadQR, 30000); 
     loadQR();
 
-    // Загрузка списка сотрудников
-    async function loadEmployees(){
+    async function loadEmployees() {
         try {
             const res = await fetch("/employees");
             const data = await res.json();
@@ -94,22 +111,127 @@
                     <td>${i+1}</td>
                     <td>${emp.login}</td>
                     <td style="white-space: nowrap;">
-                        <button onclick="editEmp(${emp.id},'${emp.login}')" title="Редактировать"><span class="icon icon-edit"></span></button>
-                        <button onclick="viewCal(${emp.id},'${emp.login}')" title="Календарь"><span class="icon icon-calendar"></span></button>
+                        <button style="display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 48px; padding: 0;" onclick="showEmployeeChart(${emp.id}, '${emp.login}')"><span class="icon icon-chart"></span></button>
+                        <button onclick="viewCal(${emp.id},'${emp.login}')" title="Календарь">
+                            <span class="icon icon-calendar"></span>
+                        </button>
+                        <button onclick="editEmp(${emp.id},'${emp.login}')" title="Редактировать">
+                            <span class="icon icon-edit"></span>
+                        </button>
+                        <button onclick="confirmDelete(${emp.id},'${emp.login}')" style="background:#ff4444; color:white;" title="Удалить">
+                            <span class="icon icon-delete"></span>
+                        </button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
-        } catch(e) { console.error("Ошибка загрузки списка", e); }
+        } catch(e) { console.error("Ошибка загрузки:", e); }
     }
     loadEmployees();
 
-    // Остальные функции (модалки, сохранение) без изменений, как в предыдущем ответе
+    // --- 2. ГРАФИК (В ОБЩЕМ СТИЛЕ) ---
+
+    let currentChartUser = { id: null, login: '' }; // Запоминаем текущего юзера
+
+    async function showEmployeeChart(userId, login, period = 'week') {
+        currentChartUser = { id: userId, login: login }; // Сохраняем для переключения
+        document.getElementById('chartModal').classList.add('active');
+        document.getElementById('modalTitle').innerText = `Активность: ${login}`;
+        
+        // Подсветка активной кнопки
+        ['week', 'month', 'year'].forEach(p => {
+            document.getElementById(`btn-${p}`).style.background = (p === period) ? '#4a90e2' : '#444';
+        });
+
+        try {
+            const res = await fetch(`/attendance/${userId}`);
+            const attendance = await res.json();
+            
+            const labels = [];
+            const dataPoints = [];
+            const now = new Date();
+
+            let daysToShow = 7; // По умолчанию неделя
+            if (period === 'month') daysToShow = 30;
+            if (period === 'year') daysToShow = 365;
+
+            // Генерируем данные в зависимости от периода
+            for (let i = daysToShow - 1; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(now.getDate() - i);
+                const dateStr = d.toISOString().split('T')[0]; // ГГГГ-ММ-ДД
+                
+                // Формат даты для подписи на оси X
+                let label;
+                if (period === 'year') {
+                    label = d.toLocaleDateString('ru-RU', { month: 'short' });
+                    // Для года склеиваем данные по месяцам, но для простоты оставим по дням или выведем только начало месяцев
+                    if (labels.includes(label)) label = ''; 
+                } else {
+                    label = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+                }
+
+                labels.push(label);
+                const hasAttended = attendance.some(a => a.time.startsWith(dateStr));
+                dataPoints.push(hasAttended ? 1 : 0);
+            }
+
+            const ctx = document.getElementById('employeeChart').getContext('2d');
+            if (myChart) myChart.destroy();
+            
+            myChart = new Chart(ctx, {
+                type: period === 'year' ? 'line' : 'bar', // Год лучше смотреть линией
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Присутствие',
+                        data: dataPoints,
+                        backgroundColor: '#4a90e2',
+                        borderColor: '#4a90e2',
+                        borderWidth: 2,
+                        pointRadius: period === 'week' ? 3 : 0, // Убираем точки, если данных много
+                        fill: period === 'year'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { 
+                        y: { 
+                            min: 0, max: 1, 
+                            ticks: { stepSize: 1, callback: v => v === 1 ? 'Был' : 'Нет' } 
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 0,
+                                autoSkip: true, // Chart.js сам пропустит лишние даты, чтобы не было каши
+                                maxTicksLimit: 15
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (e) { console.error(e); }
+    }
+
+    // Функция для кнопок внутри модалки
+    function updateChartPeriod(period) {
+        if (currentChartUser.id) {
+            showEmployeeChart(currentChartUser.id, currentChartUser.login, period);
+        }
+    }
+
+    function closeModal() { document.getElementById('chartModal').classList.remove('active'); }
+
+    // --- 3. УПРАВЛЕНИЕ СОТРУДНИКАМИ ---
+
     function addEmp() {
-        showM("Добавить сотрудника", `
+        showM("Новый сотрудник", `
             <input id="nL" placeholder="Логин">
             <input id="nP" type="password" placeholder="Пароль">
-            <button onclick="saveNew()" style="width:100%; margin-top:10px">Создать</button>
+            <button onclick="saveNew()" style="width:100%; background:#28a745; color:white; margin-top: 10px;">Создать</button>
         `);
     }
 
@@ -122,15 +244,25 @@
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify({login, password})
         });
-        closeM(); 
-        loadEmployees();
+        closeM(); loadEmployees();
+    }
+
+    async function confirmDelete(id, login) {
+        if (confirm(`Удалить сотрудника ${login}?`)) {
+            const res = await fetch("/deleteUser", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ id })
+            });
+            if ((await res.json()).success) loadEmployees();
+        }
     }
 
     function editEmp(id, login) {
         showM("Редактировать", `
             <input id="eL" value="${login}">
-            <input id="eP" type="password" placeholder="Новый пароль (опционально)">
-            <button onclick="updateEmp(${id})" style="width:100%; margin-top:10px">Сохранить</button>
+            <input id="eP" type="password" placeholder="Новый пароль">
+            <button onclick="updateEmp(${id})" style="width:100%; margin-top: 10px;">Сохранить</button>
         `);
     }
 
@@ -142,29 +274,19 @@
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify({id, login, password})
         });
-        closeM(); 
-        loadEmployees();
+        closeM(); loadEmployees();
     }
 
-    let cMonth = new Date().getMonth();
-    let cYear = new Date().getFullYear();
+    // --- 4. КАЛЕНДАРЬ ---
 
     async function viewCal(id, name) {
       const res = await fetch("/attendance/" + id);
       const data = await res.json();
-      
-      // Создаем карту: день -> время
       const attendanceMap = {};
-      
       data.forEach(entry => {
-          // entry.time это "2024-4-3 14:20"
           const [datePart, timePart] = entry.time.split(' '); 
           const [y, m, d] = datePart.split('-').map(Number);
-
-          // Проверяем, совпадает ли год и месяц с выбранным в календаре
-          if (y === cYear && m === (cMonth + 1)) {
-              attendanceMap[d] = timePart || "Отмечено";
-          }
+          if (y === cYear && m === (cMonth + 1)) attendanceMap[d] = timePart || "Есть";
       });
 
       const monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
@@ -172,31 +294,18 @@
       const firstDay = new Date(cYear, cMonth, 1).getDay();
       const offset = firstDay === 0 ? 6 : firstDay - 1;
 
-      let html = `
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px">
-              <button onclick="changeM(-1, ${id}, '${name}')"><span class="icon icon-left"></span></button>
-              <span style="font-weight:bold">${monthNames[cMonth]} ${cYear}</span>
-              <button onclick="changeM(1, ${id}, '${name}')"><span class="icon icon-right"></span></button>
-          </div>
-          <div class="calendar-grid">`;
-
+      let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; color:white;">
+              <button onclick="changeM(-1, ${id}, '${name}')">←</button>
+              <b>${monthNames[cMonth]} ${cYear}</b>
+              <button onclick="changeM(1, ${id}, '${name}')">→</button>
+          </div><div class="calendar-grid">`;
       for(let i=0; i<offset; i++) html += `<div class="calendar-day empty"></div>`;
-      
       for(let d=1; d<=daysInMonth; d++) {
           const timeAtDay = attendanceMap[d];
-          const isPresent = !!timeAtDay;
-          
-          // Всплывающее окно при клике
-          const clickAction = isPresent 
-              ? `onclick="alert('Сотрудник: ${name}\\nВремя: ${timeAtDay}')"` 
-              : `onclick="alert('Нет отметки за этот день')"` ;
-
-          html += `<div class="calendar-day ${isPresent?'present':''}" ${clickAction} style="${isPresent?'cursor:pointer':''}">
-                      ${d}
-                  </div>`;
+          html += `<div class="calendar-day ${timeAtDay?'present':''}" onclick="alert('${timeAtDay?`Пришел в: ${timeAtDay}`:'Нет отметки'}')">${d}</div>`;
       }
       html += `</div>`;
-      showM(`Посещаемость: ${name}`, html);
+      showM(`Календарь: ${name}`, html);
     }
 
     function changeM(step, id, name) {
@@ -206,6 +315,42 @@
         viewCal(id, name);
     }
 
+    // --- 5. ЛОКАЦИЯ И ПАРОЛЬ ---
+
+    function setOfficeLocation() {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const res = await fetch("/updateLocation", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert("Офис установлен!");
+                showCurrentOffice();
+            }
+        }, (err) => alert("Включите GPS!"));
+    }
+
+    async function showCurrentOffice() {
+        const res = await fetch("/getLocation");
+        const data = await res.json();
+        document.getElementById("locStatus").innerText = `Офис: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`;
+    }
+    showCurrentOffice();
+
+    function changeAdminPass() {
+        const newPass = prompt("Новый пароль:");
+        if (newPass) {
+            fetch("/changePassword", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ id: user.id, newPassword: newPass })
+            }).then(() => alert("Пароль изменен!"));
+        }
+    }
+
+    // Вспомогательные функции модалки
     function showM(t, b) {
         document.getElementById("mTitle").innerText = t;
         document.getElementById("mBody").innerHTML = b;
@@ -213,90 +358,6 @@
     }
     function closeM() { document.getElementById("modal").classList.remove("active"); }
 
-    async function loadEmployees(){
-      try {
-          const res = await fetch("/employees");
-          const data = await res.json();
-          const tbody = document.getElementById("table");
-          tbody.innerHTML = "";
-          
-          data.forEach((emp, i) => {
-              const tr = document.createElement("tr");
-              tr.innerHTML = `
-                  <td>${i+1}</td>
-                  <td>${emp.login}</td>
-                  <td style="white-space: nowrap;">
-                      <button onclick="editEmp(${emp.id},'${emp.login}')"><span class="icon icon-edit"></span></button>
-                      <button onclick="viewCal(${emp.id},'${emp.login}')"><span class="icon icon-calendar"></span></button>
-                      <button onclick="confirmDelete(${emp.id},'${emp.login}')" style="background:#ff4444; color:white;"><span class="icon icon-delete"></span></button>
-                  </td>
-              `;
-              tbody.appendChild(tr);
-          });
-      } catch(e) { console.error(e); }
-  }
-
-  async function confirmDelete(id, login) {
-      if (confirm(`Вы уверены, что хотите удалить сотрудника ${login} и всю его историю?`)) {
-          const res = await fetch("/deleteUser", {
-              method: "POST",
-              headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({ id })
-          });
-          const data = await res.json();
-          if (data.success) {
-              loadEmployees(); // Обновляем таблицу
-          } else {
-              alert("Ошибка при удалении");
-          }
-      }
-  }
-  // Функция смены пароля админа
-function changeAdminPass() {
-    const newPass = prompt("Введите новый пароль:");
-    if (!newPass) return;
-    
-    fetch("/changePassword", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ id: user.id, newPassword: newPass })
-    }).then(res => res.json()).then(data => {
-        if(data.success) alert("Пароль изменен!");
-    });
-}
-
-// Функция установки геолокации офиса
-function setOfficeLocation() {
-    if (!confirm("Установить ваше текущее местоположение как точку входа для сотрудников?")) return;
-    
-    document.getElementById("locStatus").innerText = "Получение координат...";
-    
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-        const res = await fetch("/updateLocation", {
-            method: "POST",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude
-            })
-        });
-        const data = await res.json();
-        if (data.success) {
-            alert(`Координаты обновлены!\nLat: ${data.lat}\nLng: ${data.lng}`);
-            document.getElementById("locStatus").innerText = `Офис: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`;
-        }
-    }, (err) => {
-        alert("Ошибка GPS: " + err.message);
-    });
-}
-
-// При загрузке страницы покажем текущие координаты
-async function showCurrentOffice() {
-    const res = await fetch("/getLocation");
-    const data = await res.json();
-    document.getElementById("locStatus").innerText = `Текущий офис: ${data.lat.toFixed(4)}, ${data.lng.toFixed(4)}`;
-}
-showCurrentOffice();
 </script>
 </body>
 </html>

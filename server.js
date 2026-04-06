@@ -115,26 +115,44 @@ let tokenCreatedAt = Date.now();
 
 app.post("/scan", (req, res) => {
   const { user_id, token, lat, lng } = req.body;
+  
+  // 1. Стандартные проверки (время, токен, локация)
   if (Date.now() - tokenCreatedAt > 300000) return res.send({ success: false, message: "QR устарел" });
   if (token !== currentToken) return res.send({ success: false, message: "Неверный QR" });
-  if (distance(lat, lng, allowedLat, allowedLng) > 0.1) return res.send({ success: false, message: "Вы вне офиса" });
+  
+  const dist = distance(lat, lng, allowedLat, allowedLng);
+  if (dist > 0.1) return res.send({ success: false, message: "Вы вне офиса" });
 
+  // 2. Формируем текущую дату для проверки (ГГГГ-ММ-ДД)
   const now = new Date();
   const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  const day = now.getDate();
-  const timeOnly = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  const todayDate = `${year}-${month}-${day}`; // Результат: "2026-04-06"
 
-  const fullTimeStr = `${year}-${month}-${day} ${timeOnly}`;
+  // 3. ПРОВЕРКА: отмечался ли этот user_id сегодня?
+  // Ищем записи, где время начинается с сегодняшней даты
+  db.get("SELECT * FROM attendance WHERE user_id = ? AND time LIKE ?", [user_id, todayDate + '%'], (err, row) => {
+    if (err) return res.send({ success: false, message: "Ошибка базы данных" });
 
-  db.run(
-  "INSERT INTO attendance (user_id, time) VALUES (?,?)",
-  [user_id, fullTimeStr],
-  err => {
-    if (err) return res.send({ success: false });
-    res.send({ success: true, message: "Отметка принята" });
-  }
-);
+    if (row) {
+      // Если запись за сегодня уже есть в БД
+      return res.send({ success: false, message: "Вы уже отметились сегодня!" });
+    }
+
+    // 4. Если всё ок, сохраняем отметку
+    const timeOnly = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
+    const fullTimeStr = `${todayDate} ${timeOnly}`;
+
+    db.run(
+      "INSERT INTO attendance (user_id, time) VALUES (?,?)",
+      [user_id, fullTimeStr],
+      err => {
+        if (err) return res.send({ success: false, message: "Ошибка при сохранении" });
+        res.send({ success: true, message: "Отметка принята" });
+      }
+    );
+  });
 });
 
 app.get("/qr", async (req, res) => {
